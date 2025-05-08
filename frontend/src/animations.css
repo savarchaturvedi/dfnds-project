@@ -1,0 +1,8 @@
+@keyframes slideInTop {
+    from { transform: translateY(-30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  
+  .slideInTop {
+    animation: slideInTop 0.5s ease-out;
+  }
