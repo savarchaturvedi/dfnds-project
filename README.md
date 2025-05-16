@@ -6,23 +6,28 @@ A hybrid cloud + blockchain application that uses machine learning to detect fak
 
 ## 📌 Features
 
-- ✅ News classification using AWS Comprehend (ML-as-a-Service)
-- ✅ IPFS integration for decentralized content storage
-- ✅ Ethereum smart contract for immutable logging
-- ✅ Firebase-hosted frontend for user interaction
-- ✅ Python IAN (Intelligent Autonomous Network) agent for duplicate detection
+* ✅ News classification using AWS Comprehend (ML-as-a-Service)
+* ✅ IPFS integration for decentralized content storage
+* ✅ Ethereum smart contract for immutable logging
+* ✅ Firebase-hosted frontend for user interaction
+* ✅ Python IAN (Intelligent Autonomous Network) agent for user flagging based on abuse detection
 
 ---
 
-
 # 🛠️ DFNDS Backend
 
-This backend powers the DFNDS (Decentralized Fake News Detection System) by performing the following:
+This backend powers the DFNDS (Decentralized Fake News Detection System) by:
 
-* Accepting a news headline as input via an HTTP POST request.
+* Accepting a news headline via HTTP POST.
 * Sending the headline to an Amazon SageMaker endpoint to classify it as `POSITIVE` or `NEGATIVE`.
-* Storing the classification result along with metadata to IPFS using Pinata.
-* Logging all relevant results (IP, timestamp, verdict, IPFS hash) into **Google Firestore** for further analysis (e.g., user flagging by IAN agents).
+* Uploading results to IPFS using Pinata.
+* Logging verdicts and metadata to **Google Firestore**.
+
+### 🧠 IAN Agent (Autonomous User Flagging)
+
+A containerized Python job that periodically scans Firestore for excessive `NEGATIVE` verdicts from the same IP address. It flags abusive users to a separate `flags` collection.
+
+**Deployed via:** Azure Container Apps Job (manual or scheduled trigger)
 
 ---
 
@@ -30,71 +35,45 @@ This backend powers the DFNDS (Decentralized Fake News Detection System) by perf
 
 ```
 DFNDS-PROJECT/
-└── backend/
-    ├── lambda_function.py            # Main Lambda code for processing news
-    ├── Deploy_HF_Model_DFNDS.ipynb   # SageMaker model deployment notebook
-    ├── .gitkeep                      # Git placeholder
-    └── README_backend.md             # You're here
+├── backend/
+│   ├── lambda_function.py            # Lambda for classification pipeline
+│   ├── Deploy_HF_Model_DFNDS.ipynb   # Model deployment notebook
+├── ian_agent/
+│   ├── Dockerfile                    # Container image for IAN job
+│   ├── ian_flag_user.py              # Firestore query + flag logic
+│   ├── requirements.txt             # Firebase dependencies
+│   └── firebase-service-account.json # GCP auth (mount securely in prod)
 ```
 
 ---
 
 ## 🧠 Prerequisites
 
-Ensure the following are configured:
+### 🔐 Environment Variables for Lambda
 
-### 🔐 Environment Variables
-
-Set the following as Lambda environment variables:
-
-| Variable                   | Description                                                    |
-| -------------------------- | -------------------------------------------------------------- |
-| `PINATA_API_KEY`           | API key from [Pinata](https://pinata.cloud)                    |
-| `PINATA_SECRET_KEY`        | Secret API key for IPFS uploads                                |
-| `GCP_PROJECT_ID`           | Google Cloud Firestore project ID                              |
-| `GCP_SERVICE_ACCOUNT_JSON` | Raw JSON string of a GCP service account with Firestore access |
+| Variable                   | Description                 |
+| -------------------------- | --------------------------- |
+| `PINATA_API_KEY`           | Pinata API Key              |
+| `PINATA_SECRET_KEY`        | Pinata Secret               |
+| `GCP_PROJECT_ID`           | Firestore Project ID        |
+| `GCP_SERVICE_ACCOUNT_JSON` | JSON for Firebase Admin SDK |
 
 ---
 
-## 🚀 Lambda Function Behavior
+## 🚀 Lambda Function Flow
 
-* Triggered via API Gateway (HTTP POST)
-* Accepts payload:
+Triggered via API Gateway:
 
-  ```json
-  {
-    "inputs": "NASA confirms presence of water on Mars"
-  }
-  ```
-* Sends `inputs` to SageMaker text classification endpoint.
-* Collects:
+1. Accepts payload:
 
-  * IP address (if available via request context)
-  * Prediction label (`POSITIVE`/`NEGATIVE`)
-  * Model score
-  * Timestamp
-* Uploads the result to:
+   ```json
+   { "inputs": "NASA confirms presence of water on Mars" }
+   ```
+2. Runs ML classification
+3. Stores results in:
 
-  * IPFS (via Pinata)
-  * Google Firestore (`results` collection)
-
----
-
-## 🧪 Testing
-
-Use a test event in Lambda or any REST client (like Postman):
-
-```json
-{
-  "httpMethod": "POST",
-  "body": "{\"inputs\": \"NASA confirms presence of water on Mars\"}",
-  "requestContext": {
-    "identity": {
-      "sourceIp": "123.45.67.89"
-    }
-  }
-}
-```
+   * IPFS via Pinata
+   * Firestore `results` collection
 
 ---
 
@@ -114,8 +93,31 @@ Use a test event in Lambda or any REST client (like Postman):
 
 ---
 
-## 📦 Deployment Notes
+## 🤖 IAN Agent Behavior
 
-* You can update the deployed model in SageMaker and reuse the same endpoint.
-* Make sure your Lambda IAM role has `sagemaker:InvokeEndpoint` permission.
+The IAN job does the following every time it runs:
+
+1. Checks all `results` in the past 24 hours.
+2. Groups by `ip` and counts `NEGATIVE` verdicts.
+3. Flags any IP with more than **2 negative verdicts** to Firestore:
+
+```json
+{
+  "ip": "123.45.67.89",
+  "negative_count": 3,
+  "timestamp": "2025-05-16T16:30:01Z"
+}
+```
+
+4. Stored under the `flags` collection.
+
+### 🔄 Deployment
+
+The job is deployed as a Docker container and triggered via:
+
+```bash
+az containerapp job start --name ian-flag-job --resource-group your-rg
+```
+
+Make sure the Firebase service account JSON is securely mounted or bundled into the container.
 
